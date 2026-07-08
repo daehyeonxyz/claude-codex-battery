@@ -683,7 +683,7 @@ if (!hasClaude && !hasCodex) {
 const upd = getUpdateInfo();
 if (upd.hasUpdate) {
   out.push(
-    `🆕 v${upd.latest} 업데이트 (현재 v${VERSION}) | bash="${SELF_DIR}/ccb-update.sh" terminal=false refresh=true color=#28963f`,
+    `🆕 v${upd.latest} 업데이트 (현재 v${VERSION}) | bash="${SELF_DIR}/.ccb-update.sh" terminal=false refresh=true color=#28963f`,
   );
 }
 out.push("🔄 지금 새로고침 | refresh=true");

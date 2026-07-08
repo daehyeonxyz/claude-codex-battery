@@ -67,7 +67,7 @@ cd claude-codex-battery
 3. Copy the plugin into `~/.swiftbar-plugins/`, rewriting the shebang to your machine's `bun` path *(SwiftBar runs plugins with a minimal `PATH`, so an absolute shebang is required)*
 4. Point SwiftBar at the plugin folder and launch it
 
-The battery appears in your menu bar within a few seconds. It refreshes **every minute** (the `.1m.` in the filename).
+The battery appears in your menu bar within a few seconds. It refreshes **every 2 minutes** (the `.2m.` in the filename).
 
 ### Manual install
 
@@ -76,8 +76,8 @@ If you prefer not to run the script:
 ```bash
 mkdir -p ~/.swiftbar-plugins
 # rewrite shebang to your bun path, then copy:
-sed "1s|.*|#!$(command -v bun)|" claude-codex-usage.1m.js > ~/.swiftbar-plugins/claude-codex-usage.1m.js
-chmod +x ~/.swiftbar-plugins/claude-codex-usage.1m.js
+sed "1s|.*|#!$(command -v bun)|" claude-codex-usage.2m.js > ~/.swiftbar-plugins/claude-codex-usage.2m.js
+chmod +x ~/.swiftbar-plugins/claude-codex-usage.2m.js
 defaults write com.ameba.SwiftBar PluginDirectory -string ~/.swiftbar-plugins
 open -a SwiftBar
 ```
@@ -116,7 +116,7 @@ If you'd rather it never spend tokens on its own, comment out the `maybeAutoRefr
 
 | Want to change | Where |
 |---|---|
-| Refresh interval | filename `.1m.` → `.30s.`, `.5m.`, … |
+| Refresh interval | filename `.2m.` → `.1m.`, `.5m.`, `.30s.`, … |
 | Battery size | `drawCapsule`: `bw` / `bh` (5×7 font sets the floor) |
 | Color thresholds | `heatRemain` / `heatRemainHex` (20 % / 50 %) |
 | Disable Codex auto-refresh | comment out `maybeAutoRefreshCodex(codex)` |

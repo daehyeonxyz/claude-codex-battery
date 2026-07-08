@@ -40,8 +40,8 @@ fi
 # 5) 플러그인 배치 (shebang을 이 환경의 bun 절대경로로 — SwiftBar는 GUI라 PATH가 제한적)
 PLUGIN_DIR="${SWIFTBAR_PLUGIN_DIR:-$HOME/.swiftbar-plugins}"
 mkdir -p "$PLUGIN_DIR"
-sed "1s|.*|#!$BUN|" claude-codex-usage.1m.js > "$PLUGIN_DIR/claude-codex-usage.1m.js"
-chmod +x "$PLUGIN_DIR/claude-codex-usage.1m.js"
+sed "1s|.*|#!$BUN|" claude-codex-usage.2m.js > "$PLUGIN_DIR/claude-codex-usage.2m.js"
+chmod +x "$PLUGIN_DIR/claude-codex-usage.2m.js"
 echo "✅ 플러그인 배치: $PLUGIN_DIR"
 
 # 6) SwiftBar에 폴더 지정 + 실행
@@ -51,4 +51,4 @@ open -a SwiftBar
 
 echo "────────────────────────────────────"
 echo "✅ 완료! 메뉴바 오른쪽에 배터리가 뜹니다."
-echo "   갱신 주기: 1분 (파일명 .1m. 을 .30s. 등으로 바꾸면 조정)"
+echo "   갱신 주기: 2분 (파일명 .2m. 을 .1m. .5m. 등으로 바꾸면 조정)"

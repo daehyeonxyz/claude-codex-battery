@@ -17,7 +17,7 @@
 
 `C` = Claude · `X` = Codex. Each battery shows the **remaining %** of a limit window — full & green means plenty left, red means almost out. Click for a detailed breakdown with reset times.
 
-Built as a single [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin — one self-contained script, **no third-party libraries**. The battery icons are rendered as PNGs from scratch in pure JavaScript (`node:zlib` only), so there's no image library, no `npm install`, no network calls, and nothing leaves your machine. (The only optional extra, `ccusage`, just adds a cost breakdown in the dropdown.)
+Built as a single [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin — one self-contained script, **no third-party libraries**. The battery icons are rendered as PNGs from scratch in pure JavaScript (`node:zlib` only), so there's no image library and no `npm install`. The only network call is an **optional once-a-day update check** ([see Updating](#updating)) — disable it and the widget makes none at all. (`ccusage` is an optional extra for the cost breakdown.)
 
 ---
 
@@ -94,9 +94,19 @@ open -a SwiftBar
 
 ---
 
+## Updating
+
+The widget checks GitHub for a newer version **at most once a day** — a tiny background request that is the *only* network call it ever makes. When a new version is out, a green **🆕 update** row appears in the dropdown; click it to replace the plugin in place and refresh (your previous copy is kept as `.bak`).
+
+Prefer to do it yourself? From your clone: `git pull && ./install.sh`.
+
+To turn the check off entirely, comment out the `getUpdateInfo()` call near the bottom of the script — then the widget makes **zero** network calls.
+
+---
+
 ## Privacy & security
 
-- **No network calls.** Everything is read from local files and rendered locally.
+- **No usage data leaves your machine.** Limits are read from local files and rendered locally; the only network call is the optional daily update check above.
 - **No secrets read.** It never touches `auth.json`, credentials, or keychains.
 - **No conversation content.** From Codex session logs it parses only the `rate_limits` object (numbers), never the messages.
 - Usage values are read at runtime — **nothing is baked into the code**, so sharing the script shares no data.

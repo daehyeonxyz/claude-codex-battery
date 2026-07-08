@@ -42,6 +42,9 @@ PLUGIN_DIR="${SWIFTBAR_PLUGIN_DIR:-$HOME/.swiftbar-plugins}"
 mkdir -p "$PLUGIN_DIR"
 sed "1s|.*|#!$BUN|" claude-codex-usage.2m.js > "$PLUGIN_DIR/claude-codex-usage.2m.js"
 chmod +x "$PLUGIN_DIR/claude-codex-usage.2m.js"
+# self-update 스크립트도 같은 폴더에 (드롭다운의 "🆕 업데이트"가 호출)
+cp ccb-update.sh "$PLUGIN_DIR/ccb-update.sh"
+chmod +x "$PLUGIN_DIR/ccb-update.sh"
 echo "✅ 플러그인 배치: $PLUGIN_DIR"
 
 # 6) SwiftBar에 폴더 지정 + 실행

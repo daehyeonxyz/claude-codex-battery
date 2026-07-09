@@ -74,6 +74,7 @@ cd claude-codex-battery
 1. Verify **bun** and **SwiftBar** are present (and tell you how to install them if not)
 2. Copy the plugin into `~/.swiftbar-plugins/`, rewriting the shebang to your machine's `bun` path *(SwiftBar runs plugins with a minimal `PATH`, so an absolute shebang is required)*
 3. Point SwiftBar at the plugin folder and launch it
+4. Register SwiftBar as a login item, so the battery comes back automatically after a reboot
 
 No `npm install`, no bundled libraries — the plugin is a single self-contained script.
 

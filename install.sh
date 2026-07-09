@@ -52,6 +52,18 @@ BID=$(defaults read /Applications/SwiftBar.app/Contents/Info CFBundleIdentifier 
 defaults write "$BID" PluginDirectory -string "$PLUGIN_DIR"
 open -a SwiftBar
 
+# 7) 로그인 항목 등록 → 재부팅/재로그인 후에도 자동으로 다시 뜸
+if osascript -e 'tell application "System Events" to get the name of every login item' 2>/dev/null | grep -qi swiftbar; then
+  echo "✅ 로그인 항목에 이미 등록됨 (재부팅 후 자동 실행)"
+else
+  if osascript -e 'tell application "System Events" to make login item at end with properties {path:"/Applications/SwiftBar.app", hidden:false}' >/dev/null 2>&1; then
+    echo "✅ 로그인 항목 등록 (재부팅 후 자동 실행)"
+  else
+    echo "ⓘ  로그인 항목 자동 등록 실패 — SwiftBar 메뉴에서 'Launch at Login'을 켜주세요"
+  fi
+fi
+
 echo "────────────────────────────────────"
 echo "✅ 완료! 메뉴바 오른쪽에 배터리가 뜹니다."
 echo "   갱신 주기: 2분 (파일명 .2m. 을 .1m. .5m. 등으로 바꾸면 조정)"
+echo "   재부팅 후에도 자동으로 다시 뜹니다."

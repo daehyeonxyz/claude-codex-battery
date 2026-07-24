@@ -684,7 +684,7 @@ namespace ClaudeCodexBattery
             _fMono = TryFont(new[] { "Cascadia Mono", "Consolas" }, 10.5f, FontStyle.Bold);
             _fMonoS = TryFont(new[] { "Cascadia Mono", "Consolas" }, 8f, FontStyle.Regular);
             // ring headline: the one big number per card (% sign drawn smaller)
-            _fMonoL = TryFont(new[] { "Cascadia Mono", "Consolas" }, 12.5f, FontStyle.Bold);
+            _fMonoL = TryFont(new[] { "Cascadia Mono", "Consolas" }, 13f, FontStyle.Bold);
             _fMonoPct = TryFont(new[] { "Cascadia Mono", "Consolas" }, 7.5f, FontStyle.Regular);
             _fMonoInf = TryFont(new[] { "Cascadia Mono", "Consolas" }, 13f, FontStyle.Regular);
             // native Windows icon font (quick-settings iconography)
@@ -1170,11 +1170,11 @@ namespace ClaudeCodexBattery
                             string num = Math.Round(hv * _anim).ToString();
                             SizeF nm = g.MeasureString(num, _fMonoL);
                             SizeF pm = g.MeasureString("%", _fMonoPct);
-                            float tw = nm.Width + pm.Width - 4f * s; // trim MeasureString side bearings
+                            float tw = nm.Width + pm.Width - 3f * s; // trim MeasureString side bearings
                             float nx = ringCx - tw / 2f;
                             float ny = ringCy - nm.Height / 2f;
                             g.DrawString(num, _fMonoL, hb, nx, ny);
-                            g.DrawString("%", _fMonoPct, hb, nx + nm.Width - 4f * s, ny + nm.Height - pm.Height - 1.5f * s);
+                            g.DrawString("%", _fMonoPct, hb, nx + nm.Width - 3f * s, ny + nm.Height - pm.Height - 1.5f * s);
                         }
                     }
                 }

@@ -2,16 +2,20 @@
 
 Native Windows port of the macOS SwiftBar plugin: **one tray icon, one
 dashboard**. The icon shows two slim battery gauges (left Claude, right Codex)
-as an at-a-glance signal; clicking it opens a Windows-11-quick-settings-style
-acrylic flyout — a dark slate operations panel with uniform metric rows
-(label · bullet bar · remaining % in tabular mono numerals · reset countdown),
-real service favicons, live/cache/stale status dots, native Segoe Fluent
-icons, and a real autostart toggle switch. Bars and numbers animate in
-(300 ms ease-out) on open.
+as an at-a-glance signal — rendered at 4× and downscaled, so the capsules stay
+crisp even at 16 px. Clicking it opens a Windows-11-quick-settings-style
+acrylic flyout that slides up from the taskbar: **one rounded card per
+service**, each with a headline **ring gauge** (remaining % of the tightest
+window) and uniform metric rows (label · gradient bar · remaining % in tabular
+mono numerals · reset countdown), real service favicons, live/cache/stale
+status dots, native Segoe Fluent icons, and a real autostart toggle switch.
+Rings, bars and numbers animate in (300 ms ease-out) on open and refresh.
 
 Colors: green ≥ 50 % left, amber < 50 %, red ≤ 20 % — same scale as the
 macOS widget. The tray tooltip carries the summary ("Claude 28% · Codex 100%
-남음"). Data refreshes every 2 minutes.
+남음"). Data refreshes every 2 minutes, the whole UI re-themes instantly when
+Windows switches between light and dark, and a one-shot toast warns when a
+service drops to ≤ 10 % remaining (re-arms above 20 %).
 
 ## Install
 

@@ -38,7 +38,7 @@ namespace ClaudeCodexBattery
 {
     static class Program
     {
-        public const string Version = "1.4.0";
+        public const string Version = "1.5.0";
 
         [DllImport("user32.dll")]
         static extern bool SetProcessDPIAware();
@@ -428,9 +428,21 @@ namespace ClaudeCodexBattery
             finally { DestroyIcon(h); }
         }
 
+        // Renders at 4× and downscales with bicubic filtering — GDI+ antialiasing
+        // alone leaves ragged capsule edges at 16 px, supersampling doesn't.
         public static Icon DualIcon(int size, double? claudeRemain, double? codexRemain, bool lightTaskbar)
         {
-            using (Bitmap bmp = RenderDual(size, claudeRemain, codexRemain, lightTaskbar)) return ToIcon(bmp);
+            using (Bitmap hi = RenderDual(size * 4, claudeRemain, codexRemain, lightTaskbar))
+            using (Bitmap bmp = new Bitmap(size, size, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    g.DrawImage(hi, new Rectangle(0, 0, size, size));
+                }
+                return ToIcon(bmp);
+            }
         }
 
         // The single tray icon: one or two slim upright gauges (left = Claude,
@@ -633,7 +645,7 @@ namespace ClaudeCodexBattery
         readonly Action _toggleAutostart;
         readonly Action _refresh;
         readonly Action _exitApp;
-        readonly Font _fTitle, _fSection, _fLabel, _fSmall, _fMono, _fMonoS, _fIcon;
+        readonly Font _fTitle, _fSection, _fLabel, _fSmall, _fMono, _fMonoS, _fMonoL, _fMonoPct, _fMonoInf, _fIcon;
         ClaudeUsage _claude;
         CodexUsage _codex;
         Rectangle _rRefresh, _rAuto, _rExit;
@@ -644,6 +656,12 @@ namespace ClaudeCodexBattery
         float _anim = 1f;
         System.Windows.Forms.Timer _animTimer;
         DateTime _animStart;
+        // entrance animation: the flyout slides up from the taskbar like the
+        // native quick-settings panel (position only — a layered-window fade
+        // would break the acrylic backdrop)
+        int _baseTop;
+        float _slidePx;
+        bool _entering;
 
         public FlyoutForm(Func<bool> isAutostart, Action toggleAutostart, Action refresh, Action exitApp)
         {
@@ -665,6 +683,10 @@ namespace ClaudeCodexBattery
             // tabular mono numerals: count-up animation without layout jitter
             _fMono = TryFont(new[] { "Cascadia Mono", "Consolas" }, 10.5f, FontStyle.Bold);
             _fMonoS = TryFont(new[] { "Cascadia Mono", "Consolas" }, 8f, FontStyle.Regular);
+            // ring headline: the one big number per card (% sign drawn smaller)
+            _fMonoL = TryFont(new[] { "Cascadia Mono", "Consolas" }, 13f, FontStyle.Bold);
+            _fMonoPct = TryFont(new[] { "Cascadia Mono", "Consolas" }, 7.5f, FontStyle.Regular);
+            _fMonoInf = TryFont(new[] { "Cascadia Mono", "Consolas" }, 13f, FontStyle.Regular);
             // native Windows icon font (quick-settings iconography)
             _fIcon = TryFont(new[] { "Segoe Fluent Icons", "Segoe MDL2 Assets" }, 10.5f, FontStyle.Regular);
         }
@@ -684,10 +706,17 @@ namespace ClaudeCodexBattery
             return new Font("Segoe UI", size, style, GraphicsUnit.Point);
         }
 
-        // status palette (slate + traffic light, shared with the tray icon)
-        static readonly Color StGreen = Color.FromArgb(34, 197, 94);
-        static readonly Color StAmber = Color.FromArgb(234, 179, 8);
-        static readonly Color StRed = Color.FromArgb(239, 68, 68);
+        // Flyout-only heat palette: same hue semantics as the tray icon
+        // (green ≥50, amber <50, red ≤20) but with deepened light-theme tones —
+        // the tray values wash out below WCAG contrast on white cards.
+        // IconRenderer.HeatRemain stays untouched (shared with the tray render).
+        static Color HeatUi(double r, bool light)
+        {
+            if (!light) return IconRenderer.HeatRemain(r);
+            if (r <= 20) return Color.FromArgb(220, 38, 38);
+            if (r < 50) return Color.FromArgb(217, 119, 6);
+            return Color.FromArgb(22, 163, 74);
+        }
 
         void StartAnim()
         {
@@ -701,6 +730,11 @@ namespace ClaudeCodexBattery
                     double t = (DateTime.UtcNow - _animStart).TotalMilliseconds / 300.0;
                     if (t >= 1.0) { _anim = 1f; _animTimer.Stop(); }
                     else _anim = (float)(1.0 - Math.Pow(1.0 - t, 3.0)); // ease-out cubic
+                    if (_entering)
+                    {
+                        Top = _baseTop + (int)((1f - _anim) * _slidePx);
+                        if (_anim >= 1f) _entering = false;
+                    }
                     Invalidate();
                 };
             }
@@ -722,10 +756,22 @@ namespace ClaudeCodexBattery
             base.OnHandleCreated(e);
             int round = 2; // DWMWCP_ROUND
             try { DwmSetWindowAttribute(Handle, 33, ref round, 4); } catch { }
+            ApplyTheme();
+        }
+
+        void ApplyTheme()
+        {
             bool light = TrayApp.IsLightTaskbar();
             int dark = light ? 0 : 1;
             try { DwmSetWindowAttribute(Handle, 20, ref dark, 4); } catch { }
             _glass = Acrylic.Enable(Handle, light ? 0xC8F2F2F2 : 0xB32A170F); // dark: slate #0F172A tint
+        }
+
+        // Windows theme flipped while running: re-tint the backdrop + repaint
+        public void ThemeChanged()
+        {
+            if (IsHandleCreated) ApplyTheme();
+            Invalidate();
         }
 
         // scale factor of the SAME graphics used for measuring and drawing —
@@ -757,7 +803,10 @@ namespace ClaudeCodexBattery
             if ((DateTime.UtcNow - HiddenAtUtc).TotalMilliseconds < 350) return; // click-to-toggle
             float s = DpiScale;
             Rectangle wa = Screen.FromPoint(Cursor.Position).WorkingArea;
-            Location = new Point(wa.Right - Width - (int)(12 * s), wa.Bottom - Height - (int)(12 * s));
+            _baseTop = wa.Bottom - Height - (int)(12 * s);
+            _slidePx = 22f * s;
+            _entering = true;
+            Location = new Point(wa.Right - Width - (int)(12 * s), _baseTop + (int)_slidePx);
             StartAnim();
             Show();
             Activate();
@@ -832,35 +881,45 @@ namespace ClaudeCodexBattery
                 g.DrawPath(pen, p);
         }
 
+        // one metric line inside a service card
+        class Metric
+        {
+            public readonly string Label;
+            public readonly LimitWindow W;
+            public Metric(string label, LimitWindow w) { Label = label; W = w; }
+        }
+
         // Lays out (and optionally paints) the whole flyout; returns its size.
-        // Design: a single dark "operations panel" (slate palette) - uniform
-        // single-line metric rows (label | bar | % | reset), tabular mono
-        // numerals, native Segoe Fluent icons, a real toggle switch.
-        // Data-dense but scannable; no decorative glow.
+        // Design: Windows-11-style card panel — one rounded card per service
+        // with a headline ring gauge (remaining % of the tightest window) and
+        // uniform metric rows (label | gradient bar | % | reset countdown),
+        // tabular mono numerals, native Segoe Fluent icons, a real toggle.
         Size LayoutAll(Graphics g, bool draw)
         {
             bool light = TrayApp.IsLightTaskbar();
             float s = g.DpiX / 96f;
-            int W = (int)(352 * s);
-            int p = (int)(16 * s);
+            int W = (int)(368 * s);
+            int p = (int)(14 * s);
 
             Color text = light ? Color.FromArgb(27, 34, 44) : Color.FromArgb(241, 245, 249);
             Color sub = light ? Color.FromArgb(90, 100, 114) : Color.FromArgb(166, 176, 189);
             Color faint = light ? Color.FromArgb(134, 143, 155) : Color.FromArgb(122, 132, 146);
-            Color track, hoverBg, divider, footerBg;
+            Color track, hoverBg, footerBg, cardBg, cardEdge;
             if (_glass)
             {
                 track = light ? Color.FromArgb(38, 0, 0, 0) : Color.FromArgb(36, 255, 255, 255);
                 hoverBg = light ? Color.FromArgb(36, 0, 0, 0) : Color.FromArgb(26, 255, 255, 255);
-                divider = light ? Color.FromArgb(28, 0, 0, 0) : Color.FromArgb(22, 255, 255, 255);
                 footerBg = light ? Color.FromArgb(70, 255, 255, 255) : Color.FromArgb(64, 0, 0, 0);
+                cardBg = light ? Color.FromArgb(88, 255, 255, 255) : Color.FromArgb(26, 255, 255, 255);
+                cardEdge = light ? Color.FromArgb(30, 0, 0, 0) : Color.FromArgb(26, 255, 255, 255);
             }
             else
             {
                 track = light ? Color.FromArgb(226, 230, 236) : Color.FromArgb(42, 52, 66);
                 hoverBg = light ? Color.FromArgb(232, 235, 240) : Color.FromArgb(45, 55, 70);
-                divider = light ? Color.FromArgb(228, 231, 236) : Color.FromArgb(40, 49, 62);
                 footerBg = light ? Color.FromArgb(238, 240, 244) : Color.FromArgb(21, 28, 39);
+                cardBg = light ? Color.White : Color.FromArgb(23, 32, 47);
+                cardEdge = light ? Color.FromArgb(228, 231, 236) : Color.FromArgb(40, 49, 62);
                 if (draw) g.Clear(light ? Color.FromArgb(246, 247, 249) : Color.FromArgb(15, 23, 42));
             }
 
@@ -870,14 +929,16 @@ namespace ClaudeCodexBattery
             SolidBrush bText = new SolidBrush(text);
             SolidBrush bSub = new SolidBrush(sub);
             SolidBrush bFaint = new SolidBrush(faint);
+            // status-dot palette (heat semantics, theme-aware tones)
+            Color stGreen = HeatUi(100, light), stAmber = HeatUi(30, light), stRed = HeatUi(0, light);
             int y = (int)(12 * s);
 
-            // -- title row: label + refresh icon button --
+            // -- title row: caption + refresh icon button (panel label, not a heading) --
             int tbH = (int)(30 * s);
             if (draw)
             {
                 SizeF tm = g.MeasureString("사용량", _fTitle);
-                g.DrawString("사용량", _fTitle, bText, p - 2f * s, y + (tbH - tm.Height) / 2f);
+                g.DrawString("사용량", _fTitle, bSub, p, y + (tbH - tm.Height) / 2f);
             }
             _rRefresh = new Rectangle(W - p - (int)(28 * s), y, (int)(28 * s), tbH);
             if (draw)
@@ -885,59 +946,65 @@ namespace ClaudeCodexBattery
                 if (_hover == 1) FillRounded(g, _rRefresh, 5f * s, hoverBg);
                 DrawGlyph(g, "\uE72C", _rRefresh, _hover == 1 ? text : sub); // Fluent: refresh
             }
-            y += tbH + (int)(6 * s);
+            y += tbH + (int)(10 * s);
 
-            // -- Claude section --
+            // -- Claude card --
             {
                 string status = _claude == null ? "데이터 없음"
                     : _claude.Live ? "라이브"
-                    : string.Format("캐시 {0} 전", TrayApp.FmtDur(DateTime.UtcNow - _claude.MeasuredAtUtc));
-                Color dotC = _claude == null ? StRed : _claude.Live ? StGreen : StAmber;
-                y = SectionHeader(g, draw, s, W, p, y, IconRenderer.Logo.Claude, "Claude Code", status, dotC, bText, bSub, light);
+                    : string.Format("캐시 {0} 전", TrayApp.FmtDurKo(DateTime.UtcNow - _claude.MeasuredAtUtc));
+                Color dotC = _claude == null ? stRed : _claude.Live ? stGreen : stAmber;
+                double? head = null;
+                List<Metric> rows = new List<Metric>();
                 if (_claude != null)
                 {
-                    if (_claude.FiveHour != null) y = MetricRow(g, draw, s, W, p, y, "5시간", _claude.FiveHour, track, bSub, bFaint);
-                    if (_claude.Weekly != null) y = MetricRow(g, draw, s, W, p, y, "주간", _claude.Weekly, track, bSub, bFaint);
+                    LimitWindow hm = _claude.FiveHour != null ? _claude.FiveHour : _claude.Weekly;
+                    if (hm != null) head = hm.RemainPct;
+                    if (_claude.FiveHour != null) rows.Add(new Metric("5시간", _claude.FiveHour));
+                    if (_claude.Weekly != null) rows.Add(new Metric("주간", _claude.Weekly));
                     if (_claude.TopModel != null && _claude.TopModelName != null)
-                        y = MetricRow(g, draw, s, W, p, y, _claude.TopModelName, _claude.TopModel, track, bSub, bFaint);
+                        rows.Add(new Metric(_claude.TopModelName, _claude.TopModel));
                 }
-                else
-                {
-                    if (draw) g.DrawString("Claude Code 로그인을 확인하세요", _fSmall, bSub, p, y + 4f * s);
-                    y += (int)(24 * s);
-                }
+                y = ServiceCard(g, draw, s, W, p, y, IconRenderer.Logo.Claude, "Claude Code", status, dotC,
+                    head, null, rows, _claude == null ? "Claude Code 로그인을 확인하세요" : null, null,
+                    cardBg, cardEdge, track, bText, bSub, bFaint, light);
+                y += (int)(10 * s);
             }
-            y += (int)(4 * s);
 
-            // -- Codex section --
+            // -- Codex card --
             if (_codex != null)
             {
-                if (draw) using (Pen dp = new Pen(divider)) g.DrawLine(dp, p, y, W - p, y);
-                y += (int)(10 * s);
                 TimeSpan age = DateTime.UtcNow - _codex.MeasuredAtUtc;
-                string status = string.Format("{0} 전 측정", TrayApp.FmtDur(age));
-                Color dotX = age.TotalHours >= 3 ? StAmber : StGreen;
-                y = SectionHeader(g, draw, s, W, p, y, IconRenderer.Logo.Codex,
-                    "Codex" + (string.IsNullOrEmpty(_codex.Plan) ? "" : " · " + _codex.Plan), status, dotX, bText, bSub, light);
+                string status = string.Format("{0} 전 측정", TrayApp.FmtDurKo(age));
+                Color dotX = age.TotalHours >= 3 ? stAmber : stGreen;
+                double? head = null;
+                string center = null;
+                string inline = null;
+                List<Metric> rows = new List<Metric>();
                 if (_codex.CreditsMode)
                 {
-                    string ct = _codex.CreditsUnlimited ? "크레딧 무제한"
+                    head = _codex.CreditsAvailable ? 100.0 : 0.0;
+                    if (_codex.CreditsUnlimited) center = "∞";
+                    inline = _codex.CreditsUnlimited ? "크레딧 무제한"
                         : _codex.CreditsAvailable ? "크레딧 잔액 있음" : "크레딧 소진 · 한도 초과";
-                    if (draw) g.DrawString(ct, _fLabel, bText, p, y + 4f * s);
-                    y += (int)(26 * s);
                 }
                 else
                 {
-                    if (_codex.Primary != null) y = MetricRow(g, draw, s, W, p, y, "5시간", _codex.Primary, track, bSub, bFaint);
-                    if (_codex.Secondary != null) y = MetricRow(g, draw, s, W, p, y, "주간", _codex.Secondary, track, bSub, bFaint);
+                    if (_codex.Primary != null) { head = _codex.Primary.RemainPct; rows.Add(new Metric("5시간", _codex.Primary)); }
+                    if (_codex.Secondary != null)
+                    {
+                        if (head == null) head = _codex.Secondary.RemainPct;
+                        rows.Add(new Metric("주간", _codex.Secondary));
+                    }
                 }
-                if (age.TotalHours >= 3)
-                {
-                    if (draw) g.DrawString("리셋됐을 수 있음 · Codex를 쓰면 갱신됩니다", _fSmall, bFaint, p, y + 2f * s);
-                    y += (int)(20 * s);
-                }
+                string note = age.TotalHours >= 3 ? "리셋됐을 수 있음 · Codex를 쓰면 갱신됩니다" : null;
+                y = ServiceCard(g, draw, s, W, p, y, IconRenderer.Logo.Codex,
+                    "Codex" + (string.IsNullOrEmpty(_codex.Plan) ? "" : " · " + _codex.Plan), status, dotX,
+                    head, center, rows, inline, note,
+                    cardBg, cardEdge, track, bText, bSub, bFaint, light);
+                y += (int)(10 * s);
             }
-            y += (int)(10 * s);
+            y += (int)(6 * s);
 
             // -- footer strip: autostart toggle | version + exit --
             int stripTop = y;
@@ -959,8 +1026,10 @@ namespace ClaudeCodexBattery
                 int kd = th - (int)(6 * s);
                 if (on)
                 {
-                    FillRounded(g, tr, th / 2f, StGreen);
-                    using (SolidBrush kb = new SolidBrush(Color.White))
+                    // Fluent accent, not green — green is reserved for the
+                    // usage-heat semantics in the cards above
+                    FillRounded(g, tr, th / 2f, light ? Color.FromArgb(0, 95, 184) : Color.FromArgb(76, 194, 255));
+                    using (SolidBrush kb = new SolidBrush(light ? Color.White : Color.FromArgb(15, 23, 42)))
                         g.FillEllipse(kb, tr.Right - kd - 3f * s, tr.Y + 3f * s, kd, kd);
                 }
                 else
@@ -998,15 +1067,34 @@ namespace ClaudeCodexBattery
             return new Size(W, y);
         }
 
-        // section header: favicon chip + title, status dot + text right-aligned
-        int SectionHeader(Graphics g, bool draw, float s, int W, int p, int y, IconRenderer.Logo logo,
-            string title, string status, Color dot, SolidBrush bText, SolidBrush bSub, bool light)
+        // rounded service card: header (favicon chip + title + status dot),
+        // headline ring gauge on the left, metric rows (or a text line) on the
+        // right, optional footnote under the content
+        int ServiceCard(Graphics g, bool draw, float s, int W, int p, int y, IconRenderer.Logo logo,
+            string title, string status, Color dot, double? head, string centerOverride,
+            List<Metric> rows, string inlineText, string note,
+            Color cardBg, Color cardEdge, Color track,
+            SolidBrush bText, SolidBrush bSub, SolidBrush bFaint, bool light)
         {
-            int h = (int)(28 * s);
+            int cp = (int)(12 * s);
+            int headerH = (int)(24 * s);
+            int rowH = (int)(26 * s);
+            int ringD = (int)(56 * s);
+            int contentH = Math.Max(head != null ? ringD : 0,
+                rows.Count > 0 ? rows.Count * rowH : (int)(22 * s));
+            int noteH = note != null ? (int)(18 * s) : 0;
+            int cardH = cp + headerH + (int)(8 * s) + contentH + noteH + cp;
+            Rectangle card = new Rectangle(p, y, W - p * 2, cardH);
+            int cTop = y + cp + headerH + (int)(8 * s);
+
             if (draw)
             {
+                FillRounded(g, card, 8f * s, cardBg);
+                StrokeRounded(g, card, 8f * s, cardEdge);
+
+                // header: chip + title left, status dot + text right
                 int cs = (int)(18 * s);
-                Rectangle chip = new Rectangle(p, y + (h - cs) / 2, cs, cs);
+                Rectangle chip = new Rectangle(p + cp, y + cp + (headerH - cs) / 2, cs, cs);
                 Color plate = logo == IconRenderer.Logo.Claude
                     ? Color.FromArgb(217, 119, 87)
                     : (light ? Color.FromArgb(27, 27, 27) : Color.White);
@@ -1033,61 +1121,128 @@ namespace ClaudeCodexBattery
                         IconRenderer.DrawCodexLogo(g, chip.X + cs / 2f, chip.Y + cs / 2f, cs * 0.3f, plate, glyphCol);
                 }
                 SizeF tm = g.MeasureString(title, _fSection);
-                g.DrawString(title, _fSection, bText, p + cs + 8f * s, y + (h - tm.Height) / 2f);
+                g.DrawString(title, _fSection, bText, chip.Right + 8f * s, y + cp + (headerH - tm.Height) / 2f);
                 if (status.Length > 0)
                 {
                     SizeF sm = g.MeasureString(status, _fSmall);
-                    float sx = W - p - sm.Width;
+                    float sx = card.Right - cp - sm.Width;
                     using (SolidBrush db = new SolidBrush(dot))
-                        g.FillEllipse(db, sx - 10f * s, y + h / 2f - 2.5f * s, 5f * s, 5f * s);
-                    g.DrawString(status, _fSmall, bSub, sx, y + (h - sm.Height) / 2f);
+                        g.FillEllipse(db, sx - 10f * s, y + cp + headerH / 2f - 2.5f * s, 5f * s, 5f * s);
+                    g.DrawString(status, _fSmall, bSub, sx, y + cp + (headerH - sm.Height) / 2f);
+                }
+
+                // headline ring gauge: heat lives in the stroke; the center
+                // number is body-colored — the card's one big number (warning
+                // red only at ≤20% remaining)
+                if (head != null)
+                {
+                    double hv = Math.Max(0.0, Math.Min(100.0, head.Value));
+                    Color heat = HeatUi(head.Value, light);
+                    float rw = 5.5f * s;
+                    float rx0 = p + cp + rw / 2f;
+                    float ry0 = cTop + (contentH - ringD) / 2f + rw / 2f;
+                    RectangleF rr = new RectangleF(rx0, ry0, ringD - rw, ringD - rw);
+                    using (Pen tp = new Pen(track, rw))
+                        g.DrawEllipse(tp, rr);
+                    float sweep = (float)(hv * 3.6 * _anim);
+                    if (sweep > 0.5f)
+                        using (Pen hp = new Pen(heat, rw))
+                        {
+                            hp.StartCap = LineCap.Round;
+                            hp.EndCap = LineCap.Round;
+                            g.DrawArc(hp, rr, -90f, sweep);
+                        }
+                    Color numCol = head.Value <= 20
+                        ? (light ? Color.FromArgb(185, 28, 28) : Color.FromArgb(248, 113, 113))
+                        : (light ? Color.FromArgb(27, 34, 44) : Color.FromArgb(241, 245, 249));
+                    float ringCx = p + cp + ringD / 2f;
+                    float ringCy = cTop + contentH / 2f;
+                    using (SolidBrush hb = new SolidBrush(numCol))
+                    {
+                        if (centerOverride != null)
+                        {
+                            SizeF cm = g.MeasureString(centerOverride, _fMonoInf);
+                            g.DrawString(centerOverride, _fMonoInf, hb, ringCx - cm.Width / 2f, ringCy - cm.Height / 2f);
+                        }
+                        else
+                        {
+                            // big number + small % sign, bottom-aligned as one unit
+                            string num = Math.Round(hv * _anim).ToString();
+                            SizeF nm = g.MeasureString(num, _fMonoL);
+                            SizeF pm = g.MeasureString("%", _fMonoPct);
+                            float tw = nm.Width + pm.Width - 3f * s; // trim MeasureString side bearings
+                            float nx = ringCx - tw / 2f;
+                            float ny = ringCy - nm.Height / 2f;
+                            g.DrawString(num, _fMonoL, hb, nx, ny);
+                            g.DrawString("%", _fMonoPct, hb, nx + nm.Width - 3f * s, ny + nm.Height - pm.Height - 1.5f * s);
+                        }
+                    }
                 }
             }
-            return y + h + (int)(2 * s);
+
+            int rx = p + cp + (head != null ? ringD + (int)(12 * s) : 0);
+            int rRight = card.Right - cp;
+            if (rows.Count > 0)
+            {
+                int ry = cTop + (contentH - rows.Count * rowH) / 2;
+                for (int i = 0; i < rows.Count; i++)
+                    MetricRow(g, draw, s, rx, rRight, ry + i * rowH, rowH, rows[i].Label, rows[i].W, track, bText, bSub, light);
+            }
+            else if (inlineText != null && draw)
+            {
+                SizeF im = g.MeasureString(inlineText, _fLabel);
+                g.DrawString(inlineText, _fLabel, head != null ? bText : bSub, rx, cTop + (contentH - im.Height) / 2f);
+            }
+            if (note != null && draw)
+                g.DrawString(note, _fSmall, bSub, p + cp, cTop + contentH + 2f * s);
+            return y + cardH;
         }
 
-        // uniform metric row: label | bullet bar | % (mono, heat) | reset (mono)
-        int MetricRow(Graphics g, bool draw, float s, int W, int p, int y, string label, LimitWindow w,
-            Color track, SolidBrush bSub, SolidBrush bFaint)
+        // uniform metric row: label | solid heat bar | % (mono, body color) | reset (mono)
+        // Heat lives in the bar only; the % text stays body-colored except as a
+        // ≤20% warning — one color layer per datum, not four.
+        void MetricRow(Graphics g, bool draw, float s, int x0, int x1, int y, int h, string label, LimitWindow w,
+            Color track, SolidBrush bText, SolidBrush bSub, bool light)
         {
-            int h = (int)(30 * s);
-            if (draw)
+            if (!draw) return;
+            double r = w.RemainPct;
+            Color heat = HeatUi(r, light);
+            float cy = y + h / 2f;
+            int labelW = (int)(50 * s);
+            int pctW = (int)(42 * s);
+            int resetW = (int)(56 * s);
+
+            SizeF lm = g.MeasureString(label, _fLabel);
+            g.DrawString(label, _fLabel, bSub, x0, cy - lm.Height / 2f);
+
+            string pct = string.Format("{0}%", Math.Round(r * _anim));
+            SizeF pm = g.MeasureString(pct, _fMono);
+            float pctRight = x1 - resetW - 8f * s;
+            if (r <= 20)
             {
-                double r = w.RemainPct;
-                Color heat = IconRenderer.HeatRemain(r);
-                float cy = y + h / 2f;
-                int labelW = (int)(58 * s);
-                int pctW = (int)(50 * s);
-                int resetW = (int)(66 * s);
-
-                SizeF lm = g.MeasureString(label, _fLabel);
-                g.DrawString(label, _fLabel, bSub, p, cy - lm.Height / 2f);
-
-                string pct = string.Format("{0}%", Math.Round(r * _anim));
-                SizeF pm = g.MeasureString(pct, _fMono);
-                float pctRight = W - p - resetW - 8f * s;
-                using (SolidBrush hb = new SolidBrush(heat))
-                    g.DrawString(pct, _fMono, hb, pctRight - pm.Width, cy - pm.Height / 2f);
-
-                string reset = TrayApp.ResetText(w).Replace("리셋 ", "");
-                if (reset.Length > 0)
-                {
-                    SizeF rm = g.MeasureString(reset, _fMonoS);
-                    g.DrawString(reset, _fMonoS, bFaint, W - p - rm.Width, cy - rm.Height / 2f);
-                }
-
-                float bx = p + labelW;
-                float barRight = W - p - resetW - pctW - 12f * s;
-                int bh = (int)(4 * s);
-                if (barRight - bx > 10f * s)
-                {
-                    RectangleF trk = new RectangleF(bx, cy - bh / 2f, barRight - bx, bh);
-                    FillRounded(g, trk, bh / 2f, track);
-                    float fw = (float)(trk.Width * Math.Max(0.0, Math.Min(100.0, r)) / 100.0) * _anim;
-                    if (fw > bh) FillRounded(g, new RectangleF(bx, trk.Y, fw, bh), bh / 2f, heat);
-                }
+                using (SolidBrush wb = new SolidBrush(light ? Color.FromArgb(185, 28, 28) : Color.FromArgb(248, 113, 113)))
+                    g.DrawString(pct, _fMono, wb, pctRight - pm.Width, cy - pm.Height / 2f);
             }
-            return y + h;
+            else
+                g.DrawString(pct, _fMono, bText, pctRight - pm.Width, cy - pm.Height / 2f);
+
+            string reset = TrayApp.ResetText(w).Replace("리셋 ", "");
+            if (reset.Length > 0)
+            {
+                SizeF rm = g.MeasureString(reset, _fMonoS);
+                g.DrawString(reset, _fMonoS, bSub, x1 - rm.Width, cy - rm.Height / 2f);
+            }
+
+            float bx = x0 + Math.Max(labelW, lm.Width + 6f * s);
+            float barRight = x1 - resetW - pctW - 14f * s;
+            int bh = (int)(6 * s);
+            if (barRight - bx > 10f * s)
+            {
+                RectangleF trk = new RectangleF(bx, cy - bh / 2f, barRight - bx, bh);
+                FillRounded(g, trk, bh / 2f, track);
+                float fw = (float)(trk.Width * Math.Max(0.0, Math.Min(100.0, r)) / 100.0) * _anim;
+                if (fw > bh) FillRounded(g, new RectangleF(bx, trk.Y, fw, bh), bh / 2f, heat);
+            }
         }
 
         // Segoe Fluent icon glyph centered in a rect
@@ -1114,6 +1269,9 @@ namespace ClaudeCodexBattery
         readonly System.Windows.Forms.Timer _timer;
         readonly Form _sync; // hidden window: marshals worker results to the UI thread
         int _refreshing;
+        ClaudeUsage _lastClaude; // last applied data, for theme-change re-render
+        CodexUsage _lastCodex;
+        bool _warnedClaude, _warnedCodex; // low-limit toast latches
 
         public TrayApp(bool showOnStart)
         {
@@ -1142,6 +1300,10 @@ namespace ClaudeCodexBattery
             _timer.Tick += delegate { RefreshAsync(); };
             _timer.Start();
             RefreshAsync();
+
+            // light/dark taskbar switch: re-render icon + flyout immediately
+            // (without this the old theme lingers until the next 2-min refresh)
+            SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
 
             if (showOnStart) // debug (--show): open the flyout once data has landed
             {
@@ -1195,6 +1357,18 @@ namespace ClaudeCodexBattery
             return string.Format("{0}m", m);
         }
 
+        // Korean units for header status copy; the countdown columns keep the
+        // compact h/m form (fixed column-width contract)
+        internal static string FmtDurKo(TimeSpan ts)
+        {
+            if (ts.TotalSeconds <= 0) return "0분";
+            int h = (int)ts.TotalHours;
+            int m = ts.Minutes;
+            if (h >= 24) return string.Format("{0}일 {1}시간", h / 24, h % 24);
+            if (h > 0) return string.Format("{0}시간 {1}분", h, m);
+            return string.Format("{0}분", m);
+        }
+
         internal static string ResetText(LimitWindow w)
         {
             if (w == null || w.ResetsAtUtc == null) return "";
@@ -1202,8 +1376,36 @@ namespace ClaudeCodexBattery
             return "리셋 " + FmtDur(w.ResetsAtUtc.Value - DateTime.UtcNow);
         }
 
+        void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
+        {
+            if (e.Category != UserPreferenceCategory.General && e.Category != UserPreferenceCategory.Color
+                && e.Category != UserPreferenceCategory.VisualStyle) return;
+            Apply(_lastClaude, _lastCodex);
+            _flyout.ThemeChanged();
+        }
+
+        // one toast when a service drops to ≤10% remaining; re-arms above 20%
+        void MaybeWarn(ref bool warned, double? remain, string name)
+        {
+            if (remain == null) return;
+            double r = remain.Value;
+            if (r <= 10 && !warned)
+            {
+                warned = true;
+                try
+                {
+                    _icon.ShowBalloonTip(4000, name + " 한도 임박",
+                        string.Format("{0} 남은 한도가 {1}%입니다", name, Math.Round(r)), ToolTipIcon.Warning);
+                }
+                catch { }
+            }
+            else if (r > 20 && warned) warned = false;
+        }
+
         void Apply(ClaudeUsage claude, CodexUsage codex)
         {
+            _lastClaude = claude;
+            _lastCodex = codex;
             double? c = null;
             if (claude != null)
             {
@@ -1229,6 +1431,9 @@ namespace ClaudeCodexBattery
             string t = tip.ToString();
             if (t.Length > 63) t = t.Substring(0, 62) + "…";
             _icon.Text = t;
+
+            MaybeWarn(ref _warnedClaude, c, "Claude");
+            MaybeWarn(ref _warnedCodex, x, "Codex");
 
             _flyout.SetData(claude, codex);
         }
@@ -1258,6 +1463,7 @@ namespace ClaudeCodexBattery
 
         void Quit()
         {
+            SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             _flyout.Hide();
             _icon.Visible = false;
             _icon.Dispose();
